@@ -1,0 +1,158 @@
+name: Release
+run-name: Release ${{ inputs.version }} / OpenBSD ${{ inputs.openbsd }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version: X.Y.Z or vX.Y.Z (e.g. 0.2.0)'
+        required: true
+        type: string
+      openbsd:
+        description: OpenBSD version for the native amd64 binary
+        required: true
+        default: '8.0'
+        type: choice
+        options:
+          - '8.0'
+          - '7.9'
+          - '7.8'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cairn-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate and stamp version
+        id: version
+        env:
+          RELEASE_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version=$(python scripts/release.py "$RELEASE_INPUT" --check)
+          tag="v$version"
+          existing=$(git ls-remote --tags origin "refs/tags/$tag")
+          if [ -n "$existing" ]; then
+            echo "::error::Tag $tag already exists; use a new version."
+            exit 1
+          fi
+          python scripts/release.py "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Test Python panel under X11
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth python3-tk
+          xvfb-run -a python -m unittest discover -s tests -v
+      - name: Commit stamped source locally and build Python assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pyproject.toml cwm_panel/__init__.py daemon/Cargo.toml daemon/Cargo.lock
+          git commit --allow-empty -m "Release $TAG"
+          git tag -a "$TAG" -m "Cairn $TAG"
+          mkdir -p dist release-meta
+          git archive --format=tar --prefix="cairn-panel-$VERSION/" HEAD | gzip -n > "dist/cairn-panel-$VERSION-source.tar.gz"
+          git bundle create release-meta/release.bundle "refs/tags/$TAG"
+          python -m pip install build
+          python -m build --wheel
+      - name: Test and build native OpenBSD daemon
+        uses: vmactions/openbsd-vm@f1ca8bc8ecc5b6ef7218e5b914836e067e1546d3 # v1
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        with:
+          release: ${{ inputs.openbsd }}
+          arch: x86_64
+          envs: VERSION
+          sync: rsync
+          prepare: |
+            set -eu
+            pkg_add rust
+          run: |
+            set -eu
+            cargo test --manifest-path daemon/Cargo.toml --locked --offline
+            cargo build --manifest-path daemon/Cargo.toml --release --locked --offline
+            mkdir -p native-stage
+            tar -xzf "dist/cairn-panel-$VERSION-source.tar.gz" -C native-stage
+            bundle="native-stage/cairn-panel-$VERSION"
+            mkdir -p "$bundle/bin"
+            install -m 0555 daemon/target/release/cairnd "$bundle/bin/cairnd"
+            {
+              uname -a
+              rustc --version
+              cargo --version
+            } > "$bundle/BUILD-INFO.txt"
+            tar -czf "dist/cairn-panel-$VERSION-openbsd-$(uname -r)-$(machine -a).tar.gz" -C native-stage "cairn-panel-$VERSION"
+      - name: Checksum release files
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Upload downloadable build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cairn-panel-${{ steps.version.outputs.tag }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Transfer release commit to publishing job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-git
+          path: release-meta/release.bundle
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cairn-panel-${{ needs.build.outputs.tag }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-git
+          path: release-meta
+      - name: Verify assets and publish version tag
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS)
+          git fetch release-meta/release.bundle "refs/tags/$TAG:refs/tags/$TAG"
+          # A normal push refuses to replace an existing version tag.
+          git push origin "refs/tags/$TAG"
+      - name: Create draft with assets, then publish
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" dist/* --verify-tag --draft --title "Cairn $TAG" --generate-notes
+          gh release edit "$TAG" --draft=false
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

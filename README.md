@@ -169,3 +169,38 @@ Rust 데몬은 Linux에서도 빌드·단위 테스트가 가능하며 실제 �
 [docs/protocol.md](docs/protocol.md)에 데몬 요청 형식이 있습니다.
 
 ISC license.
+
+## 버전을 지정해서 릴리스하기
+
+GitHub의 **Actions → Release → Run workflow**에서 다음을 입력합니다.
+
+- **version**: `0.2.0` 또는 `v0.2.0` 형식의 정식 버전
+- **openbsd**: 네이티브 amd64 데몬을 빌드할 OpenBSD 버전 (기본 `8.0`)
+
+실행한 브랜치의 커밋을 기준으로 Python·Cargo·잠금 파일의 버전을 맞춘 릴리스
+커밋을 만들고, 그 커밋에 `v0.2.0`과 같은 태그를 붙입니다. 버전 변경 커밋은 태그에서
+조회하며 실행한 브랜치는 자동으로 변경하지 않습니다. 기존 태그는 덮어쓰지 않습니다.
+테스트·빌드가 실패하면 태그와 공개 Release를 만들지 않습니다.
+
+성공하면 해당 실행의 **Artifacts**와 GitHub **Releases** 양쪽에서 내려받을 수 있습니다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `cairn_panel-X.Y.Z-py3-none-any.whl` | Python 패널 설치용 wheel (Tk와 시스템 도구는 별도 설치) |
+| `cairn-panel-X.Y.Z-source.tar.gz` | 버전이 반영된 전체 소스·문서·설정 예제 |
+| `cairn-panel-X.Y.Z-openbsd-OS-amd64.tar.gz` | 전체 소스와 OpenBSD에서 빌드한 `bin/cairnd`, 빌드 환경 정보 |
+| `SHA256SUMS` | 배포 파일들의 SHA256 체크섬 |
+
+네이티브 묶음을 풀면 `bin/cairnd`를 위 설치 절차의
+`daemon/target/release/cairnd` 대신 사용할 수 있습니다. 바이너리는 선택한 OpenBSD
+릴리스와 아키텍처용입니다. 다른 OS 버전에서는 소스 빌드를 권장합니다.
+
+워크플로에는 Python/X11 테스트와 OpenBSD VM 안의 Rust 테스트·릴리스 빌드가 포함됩니다.
+빌드 작업은 읽기 권한만 사용하고, 별도 게시 작업에만 `contents: write`를 부여합니다.
+기본 `GITHUB_TOKEN`으로 동작하므로 별도 PAT는 필요 없습니다. 태그 보호 규칙이나
+조직 정책이 있으면 Actions의 태그 생성·Release 게시를 허용해야 합니다.
+
+Release는 파일을 첨부한 초안으로 먼저 만들고 마지막에 공개합니다. 게시 중 실패하면
+태그나 초안이 남을 수 있으며, 같은 버전의 재실행은 기존 태그를 감지해 중단합니다.
+상태를 확인한 뒤 새 버전으로 실행하거나, 공개 전인 실패 태그·초안을 직접 정리합니다.
+Artifacts는 30일 보관하고 Release 첨부파일은 별도로 유지합니다.
