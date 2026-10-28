@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cairn-panel"
-version = "0.1.0"
+version = "0.0.1"
 description = "A quiet X11 status bar and quick settings for OpenBSD cwm"
 requires-python = ">=3.10"
 license = {text = "ISC"}
