@@ -1,0 +1,5 @@
+#!/bin/sh
+# Merge into ~/.xsession; keep your existing environment setup.
+# Use the versioned Python interpreter installed by OpenBSD packages.
+$HOME/.local/bin/cairn &
+exec cwm

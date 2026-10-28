@@ -1,0 +1,10 @@
+{
+  "height": 34,
+  "margin": 12,
+  "poll_seconds": 5,
+  "socket": "/var/run/cairn/control.sock",
+  "audio_devices": [
+    {"name": "Built-in audio", "value": "0"},
+    {"name": "USB DAC", "value": "1"}
+  ]
+}

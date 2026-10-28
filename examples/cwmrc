@@ -1,0 +1,4 @@
+# Add these lines to ~/.cwmrc. Match the gap to config.json's height.
+# gap: top bottom left right
+# Override-redirect panel windows bypass window management automatically.
+gap 34 0 0 0
